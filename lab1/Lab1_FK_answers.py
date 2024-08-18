@@ -82,7 +82,7 @@ def part2_forward_kinematics(joint_name, joint_parent, joint_offset, motion_data
     joint_positions = np.zeros((length, 3), dtype=np.float64)
     joint_orientations = np.zeros((length, 4), dtype=np.float64)
     motion = motion_data[frame_id]
-    motion = motion.reshape(21, -1)
+    motion = motion.reshape(int(len(motion) / 3), -1)
     motion_index = 0
     for i in range(length):
         name = joint_name[i]
@@ -176,7 +176,7 @@ def part3_retarget_func(T_pose_bvh_path, A_pose_bvh_path):
     temp = []
 
     for motion in motion_data:
-        motion_channel = motion.reshape(21, -1)
+        motion_channel = motion.reshape(int(len(motion) / 3), -1)
         new_channel = motion_channel.copy()
         for i in range(len(joint_name_t)):
             t_index = i + 1
