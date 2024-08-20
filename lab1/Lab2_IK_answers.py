@@ -17,7 +17,6 @@ def cal_2_vectors_rotation(v1, v2):
 
     # 计算夹角（弧度）
     angle_rad = np.arccos(cos_angle)
-    deg = np.degrees(angle_rad)
     # 计算轴角旋转向量，即向量a和向量b的叉积，然后除以2得到旋转轴，再乘以夹角
     axis = np.cross(v1 / norm1, v2 / norm2)
     axis = axis / np.linalg.norm(axis)
@@ -90,28 +89,31 @@ def part1_inverse_kinematics(meta_data: MetaData, joint_positions, joint_orienta
     motion = motion_data[0].reshape(26, -1)
     # using CCD from root to end
     end_pos = joint_positions[path[-1]]
+    path_len = len(path)
     count = 0
     while not np.allclose(end_pos, target_pose, atol=0.01) and count <= 100:
         count += 1
         for i, j_id in enumerate(path[::-1]):
-            parent_id = joint_parent[j_id]
-            if parent_id == -1:
-                continue
+            # cal joint rotation
             if j_id in path1:
+                parent_id = joint_parent[j_id]
+                if parent_id == -1:
+                    continue
                 # cal joint rotation
                 p_joint_pos = joint_positions[parent_id]
                 curr_vector = end_pos - p_joint_pos
                 target_vector = target_pose - p_joint_pos
-                joint_r = cal_2_vectors_rotation(curr_vector, target_vector)
-                motion[parent_id + 1] = joint_r.as_euler("XYZ", degrees=True)
+                delta_r = cal_2_vectors_rotation(curr_vector, target_vector)
+                motion[parent_id + 1] = (R.from_euler("XYZ", motion[parent_id + 1], degrees=True) * delta_r).as_euler("XYZ", degrees=True)
             else:
-                if i <= 0:
+                if path_len - 1 - i <= 1:
                     continue
-                child_pos = joint_positions[path[i-1]]
+                child_pos = joint_positions[path[(path_len - 1 - i) - 1]]
                 curr_vector = end_pos - child_pos
                 target_vector = target_pose - child_pos
-                joint_r = cal_2_vectors_rotation(curr_vector, target_vector)
-                motion[j_id + 1] = joint_r.inv().as_euler("XYZ", degrees=True)
+                delta_r = cal_2_vectors_rotation(curr_vector, target_vector)
+                motion[j_id + 1] = (R.from_euler("XYZ", motion[j_id + 1], degrees=True) * delta_r.inv()).as_euler("XYZ", degrees=True)
+                # motion[j_id + 1] = delta_r.inv().as_euler("XYZ", degrees=True)
 
             # cal end position
             joint_positions, joint_orientations = cal_forward_kinematics(joint_name, joint_parent, joint_offset, motion_data, 0)
