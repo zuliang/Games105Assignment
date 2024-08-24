@@ -127,7 +127,7 @@ def part2(viewer, bvh_name):
                 self.joint_name, self.joint_parent, self.joint_offset, self.motion_data, self.current_frame)
             joint_position, joint_orientation = part2_inverse_kinematics(self.meta_data, joint_position, joint_orientation, 0.1, 0.3, 1.4)
             viewer.show_pose(self.joint_name, joint_position, joint_orientation)
-            self.current_frame = (self.current_frame + 1) % self.motion_data.shape[0]
+            # self.current_frame = (self.current_frame + 1) % self.motion_data.shape[0]
     handle = UpdateHandle(meta_data, motion_data, bvh_offset)
     viewer.update_func = handle.update_func
     viewer.run()
@@ -166,14 +166,14 @@ def bonus(viewer, left_target_pos, right_target_pos):
 
 def main():
     viewer = SimpleViewer()
-    
+
     # part1
     # part1_simple(viewer, np.array([0.5, 0.75, 0.5]))
-    part1_hard(viewer, np.array([0.5, 0.5, 0.5]))
+    # part1_hard(viewer, np.array([0.5, 0.5, 0.5]))
     # part1_animation(viewer, np.array([0.5, 0.5, 0.5]))
     
     # part2
-    # part2(viewer, 'data/walk60.bvh')
+    part2(viewer, 'data/walk60.bvh')
     
     # bonus(viewer, np.array([0.5, 0.5, 0.5]), np.array([0, 0.5, 0.5]))
 

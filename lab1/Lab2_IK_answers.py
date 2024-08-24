@@ -18,7 +18,7 @@ def cal_2_vectors_rotation(v1, v2):
     # 计算夹角（弧度）
     angle_rad = np.arccos(cos_angle)
     # 计算轴角旋转向量，即向量a和向量b的叉积，然后除以2得到旋转轴，再乘以夹角
-    axis = np.cross(v1 / norm1, v2 / norm2)
+    axis = np.cross(v1, v2)
     axis = axis / np.linalg.norm(axis)
     if any(np.isnan(axis)):
         return ZERO_R
@@ -26,7 +26,7 @@ def cal_2_vectors_rotation(v1, v2):
     return R.from_rotvec(rotation_axis)
 
 
-def cal_forward_kinematics(joint_name, joint_parent, joint_offset, motion_data, frame_id):
+def cal_forward_kinematics(joint_name, joint_parent, joint_offset, motion_data):
     """请填写以下内容
     输入: part1 获得的关节名字，父节点列表，偏移量列表
         motion_data: np.ndarray，形状为(N,X)的numpy数组，其中N为帧数，X为Channel数
@@ -41,16 +41,14 @@ def cal_forward_kinematics(joint_name, joint_parent, joint_offset, motion_data, 
     length = len(joint_name)
     joint_positions = np.zeros((length, 3), dtype=np.float64)
     joint_orientations = np.zeros((length, 4), dtype=np.float64)
-    motion = motion_data[frame_id]
-    motion = motion.reshape(length + 1, -1)
     for i in range(length):
         if joint_parent[i] == -1:
-            joint_positions[i] = motion[i]
-            joint_orientations[i] = R.from_euler('XYZ', motion[i + 1], degrees=True).as_quat()
+            joint_positions[i] = motion_data[i]
+            joint_orientations[i] = motion_data[i + 1].as_quat()
         else:
             parent_orientation = R(joint_orientations[joint_parent[i]])
             joint_positions[i] = joint_positions[joint_parent[i]] + parent_orientation.apply(joint_offset[i])
-            joint_orientations[i] = (parent_orientation * R.from_euler('XYZ', motion[i + 1], degrees=True)).as_quat()
+            joint_orientations[i] = (parent_orientation * motion_data[i + 1]).as_quat()
     return joint_positions, joint_orientations
 
 
@@ -63,6 +61,13 @@ def cal_joint_offset(joint_parent, init_poses):
         else:
             joint_offset[i] = init_poses[i] - init_poses[p_id]
     return joint_offset
+
+
+def update_chain_ori_pos(chain_orientations, chain_poses, chain_rotations, chain_offset, index):
+    # 计算并更新所有子骨骼的朝向和位置
+    for i in range(index, len(chain_poses)):
+        chain_orientations[i] = chain_orientations[i - 1] * chain_rotations[i]
+        chain_poses[i] = chain_poses[i - 1] + chain_orientations[i - 1].apply(chain_offset[i])
 
 
 def part1_inverse_kinematics(meta_data: MetaData, joint_positions, joint_orientations, target_pose):
@@ -78,46 +83,78 @@ def part1_inverse_kinematics(meta_data: MetaData, joint_positions, joint_orienta
         joint_positions: 计算得到的关节位置，是一个numpy数组，shape为(M, 3)，M为关节数
         joint_orientations: 计算得到的关节朝向，是一个numpy数组，shape为(M, 4)，M为关节数
     """
+    def get_joint_rotations():
+        joint_rotations = [ZERO_R for _ in joint_name]
+        for i in range(len(joint_name)):
+            if joint_parent[i] == -1:
+                joint_rotations[i] = R.from_euler('XYZ', [0.,0.,0.])
+            else:
+                joint_rotations[i] = (R.from_quat(joint_orientations[joint_parent[i]]).inv() * R.from_quat(joint_orientations[i]))
+        return joint_rotations
+
     path, path_name, path1, path2 = meta_data.get_path_from_root_to_end()
     joint_name = meta_data.joint_name
     joint_parent = meta_data.joint_parent
     joint_offset = cal_joint_offset(joint_parent, meta_data.joint_initial_position)
+    # 每个bone的局部旋转
+    joint_rotations = get_joint_rotations()
     root_id = path2[-1]
-    motion_data = [R.from_quat(q).as_euler("XYZ", degrees=True) for q in joint_orientations]
+
+    # init motion, motion data format[root position, bone tree rotations...]
+    motion_data = [R.from_quat(q) for q in joint_orientations]
     motion_data.insert(0, joint_positions[root_id])
-    motion_data = [np.concatenate(motion_data, axis=0)]
-    motion = motion_data[0].reshape(26, -1)
+
+    # init chain
+    chain_poses = [joint_positions[j_id] for j_id in path]
+    chain_rotations = [ZERO_R for _ in path]
+    chain_orientations = [R.from_quat(joint_orientations[j_id]) for j_id in path]
+    chain_offset = np.empty((len(path), 3))
+
+    for i, j_id in enumerate(path):
+        if i == 0:
+            continue
+        if j_id in path2:
+            chain_offset[i] = -joint_offset[path[i - 1]]
+            # 骨骼链的局部旋转
+            chain_rotations[i] = joint_rotations[path[i]].inv()
+        else:
+            chain_offset[i] = joint_offset[j_id]
+            # 骨骼链的局部旋转
+            chain_rotations[i] = joint_rotations[j_id]
+
     # using CCD from root to end
     end_pos = joint_positions[path[-1]]
     path_len = len(path)
     count = 0
     while not np.allclose(end_pos, target_pose, atol=0.01) and count <= 100:
-        count += 1
-        for i, j_id in enumerate(path[::-1]):
+        for i in range(path_len - 2, 0, -1):
+            if joint_parent[path[i]] == -1:
+                continue
+            parent_id = i
             # cal joint rotation
-            if j_id in path1:
-                parent_id = joint_parent[j_id]
-                if parent_id == -1:
-                    continue
-                # cal joint rotation
-                p_joint_pos = joint_positions[parent_id]
-                curr_vector = end_pos - p_joint_pos
-                target_vector = target_pose - p_joint_pos
-                delta_r = cal_2_vectors_rotation(curr_vector, target_vector)
-                motion[parent_id + 1] = (R.from_euler("XYZ", motion[parent_id + 1], degrees=True) * delta_r).as_euler("XYZ", degrees=True)
-            else:
-                if path_len - 1 - i <= 1:
-                    continue
-                child_pos = joint_positions[path[(path_len - 1 - i) - 1]]
-                curr_vector = end_pos - child_pos
-                target_vector = target_pose - child_pos
-                delta_r = cal_2_vectors_rotation(curr_vector, target_vector)
-                motion[j_id + 1] = (R.from_euler("XYZ", motion[j_id + 1], degrees=True) * delta_r.inv()).as_euler("XYZ", degrees=True)
-                # motion[j_id + 1] = delta_r.inv().as_euler("XYZ", degrees=True)
+            p_joint_pos = chain_poses[parent_id]
+            curr_vector = end_pos - p_joint_pos
+            target_vector = target_pose - p_joint_pos
+            delta_r = cal_2_vectors_rotation(curr_vector, target_vector)
+            chain_orientations[parent_id] = delta_r * chain_orientations[parent_id]
+            chain_rotations[parent_id] = chain_orientations[parent_id - 1].inv() * chain_orientations[parent_id]
+            update_chain_ori_pos(chain_orientations, chain_poses, chain_rotations, chain_offset, parent_id + 1)
+            end_pos = chain_poses[-1]
+        count += 1
 
-            # cal end position
-            joint_positions, joint_orientations = cal_forward_kinematics(joint_name, joint_parent, joint_offset, motion_data, 0)
-            end_pos = joint_positions[path[-1]]
+    for i, j_id in enumerate(path):
+        if j_id in path1:
+            motion_data[j_id + 1] = chain_rotations[i]
+        elif len(path2) > 1:
+            motion_data[j_id + 1] = chain_rotations[i].inv()
+
+    path_root_id = path.index(root_id)
+    motion_data[0] = chain_poses[path_root_id]
+    if path_root_id != 0:
+        motion_data[1] = chain_orientations[path_root_id]
+
+    joint_positions, joint_orientations = cal_forward_kinematics(joint_name, joint_parent, joint_offset, motion_data)
+
     print("try times:", count)
     return joint_positions, joint_orientations
 
@@ -126,8 +163,36 @@ def part2_inverse_kinematics(meta_data, joint_positions, joint_orientations, rel
     """
     输入lWrist相对于RootJoint前进方向的xz偏移，以及目标高度，IK以外的部分与bvh一致
     """
-    
+    path, path_name, path1, path2 = meta_data.get_path_from_root_to_end()
+    joint_parents = meta_data.joint_parent
+    root_id = joint_parents.index(-1)
+    root_pos = joint_positions[root_id]
+    root_ori = joint_orientations[root_id]
+    tar_pose = root_pos + R.from_quat(root_ori).apply(np.array([relative_x, 0, relative_z]))
+    tar_pose[1] = target_height
+
+    path_len = len(path)
+    end_pose = joint_positions[path[-1]]
+    count = 0
+    # while not np.allclose(end_pos, tar_pose, atol=0.01) and count <= 100:
+    #     for i in range(path_len - 2, 0, -1):
+    #         if joint_parents[path[i]] == -1:
+    #             continue
+    #         parent_id = i
+    #         # cal joint rotation
+    #         p_joint_pos = chain_poses[parent_id]
+    #         curr_vector = end_pos - p_joint_pos
+    #         target_vector = target_pose - p_joint_pos
+    #         delta_r = cal_2_vectors_rotation(curr_vector, target_vector)
+    #         chain_orientations[parent_id] = delta_r * chain_orientations[parent_id]
+    #         chain_rotations[parent_id] = chain_orientations[parent_id - 1].inv() * chain_orientations[parent_id]
+    #         update_chain_ori_pos(chain_orientations, chain_poses, chain_rotations, chain_offset, parent_id + 1)
+    #         end_pos = chain_poses[-1]
+    #     count += 1
+
+
     return joint_positions, joint_orientations
+
 
 def bonus_inverse_kinematics(meta_data, joint_positions, joint_orientations, left_target_pose, right_target_pose):
     """
