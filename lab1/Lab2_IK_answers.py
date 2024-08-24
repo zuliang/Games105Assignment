@@ -170,27 +170,34 @@ def part2_inverse_kinematics(meta_data, joint_positions, joint_orientations, rel
     root_ori = joint_orientations[root_id]
     tar_pose = root_pos + R.from_quat(root_ori).apply(np.array([relative_x, 0, relative_z]))
     tar_pose[1] = target_height
+    lcl_joint_rots = [ZERO_R for _ in path]
+    joint_offset = cal_joint_offset(joint_parents, meta_data.joint_initial_position)
 
     path_len = len(path)
     end_pose = joint_positions[path[-1]]
     count = 0
-    # while not np.allclose(end_pos, tar_pose, atol=0.01) and count <= 100:
-    #     for i in range(path_len - 2, 0, -1):
-    #         if joint_parents[path[i]] == -1:
-    #             continue
-    #         parent_id = i
-    #         # cal joint rotation
-    #         p_joint_pos = chain_poses[parent_id]
-    #         curr_vector = end_pos - p_joint_pos
-    #         target_vector = target_pose - p_joint_pos
-    #         delta_r = cal_2_vectors_rotation(curr_vector, target_vector)
-    #         chain_orientations[parent_id] = delta_r * chain_orientations[parent_id]
-    #         chain_rotations[parent_id] = chain_orientations[parent_id - 1].inv() * chain_orientations[parent_id]
-    #         update_chain_ori_pos(chain_orientations, chain_poses, chain_rotations, chain_offset, parent_id + 1)
-    #         end_pos = chain_poses[-1]
-    #     count += 1
+    while not np.allclose(end_pose, tar_pose, atol=0.01) and count <= 10:
+        for i in range(path_len - 1, 0, -1):
+            if joint_parents[path[i]] == -1:
+                continue
+            # cal joint rotation
+            curr_index = path[i]
+            c_joint_pos = joint_positions[curr_index]
+            curr_vector = end_pose - c_joint_pos
+            target_vector = tar_pose - c_joint_pos
+            delta_r = cal_2_vectors_rotation(curr_vector, target_vector)
+            joint_orientations[curr_index] = (delta_r * R.from_quat(joint_orientations[curr_index])).as_quat()
+            lcl_joint_rots[i] = R.from_quat(joint_orientations[joint_parents[curr_index]]).inv() * R.from_quat(joint_orientations[curr_index])
+            # 计算并更新所有子骨骼的朝向和位置
+            b_id = curr_index
+            while b_id in joint_parents:
+                # get child bone index
+                b_id = joint_parents.index(b_id)
+                lcl_rot = ZERO_R if b_id not in path else lcl_joint_rots[path.index(b_id)]
+                joint_orientations[b_id] = (R.from_quat(joint_orientations[joint_parents[b_id]]) * lcl_rot).as_quat()
+                joint_positions[b_id] = joint_positions[joint_parents[b_id]] + R(joint_orientations[joint_parents[b_id]]).apply(joint_offset[b_id])
 
-
+            end_pose = joint_positions[path[-1]]
     return joint_positions, joint_orientations
 
 
