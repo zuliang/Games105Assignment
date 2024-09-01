@@ -112,7 +112,7 @@ def part1_inverse_kinematics(meta_data: MetaData, joint_positions, joint_orienta
     chain_offset = np.empty((len(path), 3))
 
     if len(path2) > 1:
-        chain_orientations[0] = R.from_quat(joint_orientations[path2[1]]).inv()
+        chain_orientations[0] = R.from_quat(joint_orientations[path2[1]])
     else:
         chain_orientations[0] = R.from_quat(joint_orientations[path[0]])
 
@@ -133,7 +133,7 @@ def part1_inverse_kinematics(meta_data: MetaData, joint_positions, joint_orienta
     end_pos = joint_positions[path[-1]]
     path_len = len(path)
     count = 0
-    while not np.allclose(end_pos, target_pose, atol=0.01) and count <= 100:
+    while not np.allclose(end_pos, target_pose, atol=0.01) and count <= 10:
         for i in range(path_len - 2, -1, -1):
             if joint_parent[path[i]] == -1:
                 continue
